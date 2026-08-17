@@ -162,12 +162,15 @@ def get_signal(score):
 
 
 def fmt(value, digits=2):
-
     if value is None:
         return "N/A"
-
     return f"{value:,.{digits}f}"
 
+
+def fmt_change(value):
+    if value is None:
+        return "N/A"
+    return f"{value:+.2f}%"
 
 def main():
 
