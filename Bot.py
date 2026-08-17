@@ -2,143 +2,166 @@ import os
 import json
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
 
-TOKEN = os.environ.get("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 
 if not TOKEN:
-    raise Exception("BOT_TOKEN is not configured")
+    print("ERROR: BOT_TOKEN not found")
+    exit(1)
 
 
-def api(url):
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "BTC-Risk-Bot/1.0"}
-    )
-    with urllib.request.urlopen(req, timeout=20) as response:
-        return json.loads(response.read().decode())
+def request_json(url, data=None):
+    try:
+        if data:
+            data = urllib.parse.urlencode(data).encode()
+            req = urllib.request.Request(url, data=data)
+        else:
+            req = urllib.request.Request(url)
+
+        req.add_header("User-Agent", "BTC-Risk-Bot/1.0")
+
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return json.loads(response.read().decode())
+
+    except Exception as e:
+        print("REQUEST ERROR:")
+        print(type(e).__name__, str(e))
+        return None
 
 
 def telegram(method, params=None):
     url = f"https://api.telegram.org/bot{TOKEN}/{method}"
-
-    if params:
-        data = urllib.parse.urlencode(params).encode()
-        req = urllib.request.Request(url, data=data)
-    else:
-        req = urllib.request.Request(url)
-
-    with urllib.request.urlopen(req, timeout=20) as response:
-        return json.loads(response.read().decode())
+    return request_json(url, params)
 
 
-def get_price(symbol):
-    data = api(
-        f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+def get_market():
+    url = (
+        "https://api.coingecko.com/api/v3/simple/price"
+        "?ids=bitcoin,ethereum"
+        "&vs_currencies=usd"
+        "&include_24hr_change=true"
     )
 
-    return {
-        "price": float(data["lastPrice"]),
-        "change": float(data["priceChangePercent"]),
-        "volume": float(data["quoteVolume"])
-    }
+    data = request_json(url)
 
+    if not data:
+        return None
 
-def make_analysis(btc, eth):
-    score = 0
+    if "bitcoin" not in data or "ethereum" not in data:
+        print("ERROR: CoinGecko returned unexpected data")
+        print(data)
+        return None
 
-    if btc["change"] > 2:
-        score += 2
-    elif btc["change"] > 0:
-        score += 1
-    elif btc["change"] < -2:
-        score -= 2
-    else:
-        score -= 1
-
-    if eth["change"] > 2:
-        score += 1
-    elif eth["change"] < -2:
-        score -= 1
-
-    if score >= 2:
-        signal = "🟢 LONG"
-        idea = (
-            "Фон рынка сейчас больше поддерживает LONG-сценарий.\n"
-            "Но вход лучше искать после подтверждения движения BTC."
-        )
-    elif score <= -2:
-        signal = "🔴 SHORT"
-        idea = (
-            "Фон рынка сейчас больше поддерживает SHORT-сценарий.\n"
-            "Не стоит открывать позицию только по этому сигналу."
-        )
-    else:
-        signal = "🟡 WAIT"
-        idea = (
-            "Рынок смешанный.\n"
-            "Лучше дождаться более чёткого движения BTC."
-        )
-
-    score_text = f"{score:+d}/3"
-
-    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
-
-    text = (
-        "₿ BTC RISK ON BOT\n"
-        "━━━━━━━━━━━━━━\n\n"
-        f"🕐 {now}\n\n"
-        f"₿ BTC: ${btc['price']:,.2f}\n"
-        f"📊 24h: {btc['change']:+.2f}%\n\n"
-        f"Ξ ETH: ${eth['price']:,.2f}\n"
-        f"📊 24h: {eth['change']:+.2f}%\n\n"
-        "━━━━━━━━━━━━━━\n"
-        f"🎯 SIGNAL: {signal}\n"
-        f"⚡ Risk Score: {score_text}\n\n"
-        f"{idea}\n\n"
-        "⚠️ Risk Score — фильтр, а не гарантия прибыли."
-    )
-
-    return text
+    return data
 
 
 def main():
-    print("Bot started")
 
-    btc = get_price("BTCUSDT")
-    eth = get_price("ETHUSDT")
+    print("================================")
+    print("BTC RISK ON BOT STARTED")
+    print("================================")
 
-    print("BTC:", btc)
-    print("ETH:", eth)
+    print("Checking Telegram...")
 
-    result = telegram("getUpdates")
+    me = telegram("getMe")
 
-    if not result.get("ok"):
-        raise Exception("Telegram getUpdates error")
+    if not me or not me.get("ok"):
+        print("ERROR: Telegram token is invalid or Telegram unavailable")
+        print(me)
+        exit(1)
 
-    updates = result.get("result", [])
+    print("Telegram OK:", me["result"]["username"])
 
-    if not updates:
-        print("No Telegram messages yet.")
-        print("Open your bot in Telegram and press /start.")
+    print("Getting market data...")
+
+    market = get_market()
+
+    if not market:
+        print("ERROR: Could not get market data")
+        exit(1)
+
+    btc_price = market["bitcoin"]["usd"]
+    btc_change = market["bitcoin"].get("usd_24h_change", 0)
+
+    eth_price = market["ethereum"]["usd"]
+    eth_change = market["ethereum"].get("usd_24h_change", 0)
+
+    print("BTC:", btc_price)
+    print("BTC 24h:", btc_change)
+    print("ETH:", eth_price)
+    print("ETH 24h:", eth_change)
+
+    if btc_change >= 2:
+        signal = "🟢 LONG"
+        idea = "BTC показывает сильный рост. LONG-сценарий выглядит предпочтительнее."
+        score = 3
+
+    elif btc_change <= -2:
+        signal = "🔴 SHORT"
+        idea = "BTC показывает сильное снижение. SHORT-сценарий выглядит предпочтительнее."
+        score = -3
+
+    else:
+        signal = "🟡 WAIT"
+        idea = "Движение BTC пока недостаточно сильное. Лучше дождаться подтверждения."
+        score = 0
+
+    text = f"""₿ BTC RISK ON BOT
+
+━━━━━━━━━━━━━━
+
+₿ BTC: ${btc_price:,.2f}
+📊 24h: {btc_change:+.2f}%
+
+Ξ ETH: ${eth_price:,.2f}
+📊 24h: {eth_change:+.2f}%
+
+━━━━━━━━━━━━━━
+
+🎯 SIGNAL: {signal}
+⚡ Risk Score: {score:+d}/3
+
+{idea}
+
+⚠️ Это аналитический фильтр, а не гарантия прибыли.
+"""
+
+    print("Searching for Telegram chat...")
+
+    updates = telegram("getUpdates")
+
+    if not updates or not updates.get("ok"):
+        print("ERROR: Telegram getUpdates failed")
+        print(updates)
+        exit(1)
+
+    results = updates.get("result", [])
+
+    if not results:
+        print("================================")
+        print("NO CHAT FOUND")
+        print("Open the bot in Telegram and send /start")
+        print("Then run the workflow again.")
+        print("================================")
         return
 
     chat_id = None
 
-    for update in reversed(updates):
+    for update in reversed(results):
+
         message = update.get("message")
 
         if message and message.get("chat"):
             chat_id = message["chat"]["id"]
             break
 
-    if chat_id is None:
-        print("No chat found.")
+    if not chat_id:
+        print("ERROR: Could not find chat_id")
         return
 
-    text = make_analysis(btc, eth)
+    print("Chat ID:", chat_id)
 
-    telegram(
+    result = telegram(
         "sendMessage",
         {
             "chat_id": chat_id,
@@ -146,7 +169,14 @@ def main():
         }
     )
 
-    print("Message sent successfully!")
+    if not result or not result.get("ok"):
+        print("ERROR: Telegram could not send message")
+        print(result)
+        exit(1)
+
+    print("================================")
+    print("MESSAGE SENT SUCCESSFULLY")
+    print("================================")
 
 
 if __name__ == "__main__":
