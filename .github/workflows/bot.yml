@@ -1,14 +1,22 @@
-name: BTC Risk On Bot
+name: BTC Risk Monitor
 
 on:
   workflow_dispatch:
 
+  schedule:
+    - cron: "0 6 * * *"
+    - cron: "0 13 * * *"
+    - cron: "30 19 * * *"
+
 jobs:
+
   run-bot:
+
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download repository
+
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -16,7 +24,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run bot
+      - name: Run BTC Risk Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: python Bot.py
