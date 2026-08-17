@@ -2,17 +2,14 @@ import os
 import json
 import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 TOKEN = os.environ.get("BOT_TOKEN")
 
 if not TOKEN:
     raise Exception("BOT_TOKEN is missing")
 
-
-# =========================
-# НАСТРОЙКИ
-# =========================
 
 CRYPTO_IDS = {
     "bitcoin": "BTC",
@@ -30,18 +27,13 @@ CRYPTO_IDS = {
 }
 
 
-# =========================
-# HTTP
-# =========================
-
 def get_json(url):
 
     try:
-
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "BTC-Risk-Bot/2.0"
+                "User-Agent": "BTC-Risk-Bot/3.0"
             }
         )
 
@@ -60,10 +52,6 @@ def get_json(url):
 
         return None
 
-
-# =========================
-# TELEGRAM
-# =========================
 
 def telegram(method, params=None):
 
@@ -107,10 +95,6 @@ def telegram(method, params=None):
         return None
 
 
-# =========================
-# ФОРМАТИРОВАНИЕ
-# =========================
-
 def number(value, digits=2):
 
     if value is None:
@@ -135,10 +119,6 @@ def percent(value):
         return "N/A"
 
 
-# =========================
-# CRYPTO
-# =========================
-
 def get_crypto():
 
     ids = ",".join(
@@ -156,17 +136,10 @@ def get_crypto():
     data = get_json(url)
 
     if not data:
-
-        print("Crypto data unavailable")
-
         return {}
 
     return data
 
-
-# =========================
-# YAHOO
-# =========================
 
 def get_yahoo(symbol):
 
@@ -180,7 +153,6 @@ def get_yahoo(symbol):
     data = get_json(url)
 
     if not data:
-
         return None, None
 
     try:
@@ -199,7 +171,6 @@ def get_yahoo(symbol):
         ]
 
         if len(closes) < 2:
-
             return None, None
 
         current = float(closes[-1])
@@ -220,10 +191,6 @@ def get_yahoo(symbol):
 
         return None, None
 
-
-# =========================
-# USD / UAH
-# =========================
 
 def get_usd_uah():
 
@@ -246,10 +213,6 @@ def get_usd_uah():
         return None
 
 
-# =========================
-# RISK SCORE
-# =========================
-
 def calculate_score(
     btc_change,
     vix_change,
@@ -261,8 +224,6 @@ def calculate_score(
 
     score = 0
 
-    # BTC
-
     if btc_change is not None:
 
         if btc_change > 1:
@@ -270,10 +231,6 @@ def calculate_score(
 
         elif btc_change < -1:
             score -= 20
-
-
-    # VIX
-    # падающий VIX = risk-on
 
     if vix_change is not None:
 
@@ -283,10 +240,6 @@ def calculate_score(
         elif vix_change > 0:
             score -= 15
 
-
-    # DXY
-    # падающий доллар = risk-on
-
     if dxy_change is not None:
 
         if dxy_change < 0:
@@ -294,9 +247,6 @@ def calculate_score(
 
         elif dxy_change > 0:
             score -= 15
-
-
-    # NASDAQ
 
     if nasdaq_change is not None:
 
@@ -306,9 +256,6 @@ def calculate_score(
         elif nasdaq_change < 0:
             score -= 15
 
-
-    # S&P500
-
     if sp500_change is not None:
 
         if sp500_change > 0:
@@ -316,9 +263,6 @@ def calculate_score(
 
         elif sp500_change < 0:
             score -= 10
-
-
-    # US10Y
 
     if us10y_change is not None:
 
@@ -328,18 +272,13 @@ def calculate_score(
         elif us10y_change > 0:
             score -= 10
 
-
     return max(
         -100,
         min(100, score)
     )
 
 
-# =========================
-# SIGNAL
-# =========================
-
-def signal(score):
+def get_signal(score):
 
     if score >= 60:
         return "🟢 STRONG LONG"
@@ -356,23 +295,13 @@ def signal(score):
     return "🟡 WAIT"
 
 
-# =========================
-# MAIN
-# =========================
-
 def main():
 
-    print("======================")
     print("BTC RISK BOT STARTED")
-    print("======================")
-
-
-    # Telegram
 
     me = telegram("getMe")
 
     if not me or not me.get("ok"):
-
         raise Exception(
             "Telegram BOT_TOKEN error"
         )
@@ -382,9 +311,6 @@ def main():
         me["result"].get("username")
     )
 
-
-    # Crypto
-
     crypto = get_crypto()
 
     print(
@@ -392,55 +318,28 @@ def main():
         len(crypto)
     )
 
+    vix_price, vix_change = get_yahoo("^VIX")
 
-    # Macro
+    dxy_price, dxy_change = get_yahoo("DX-Y.NYB")
 
-    vix_price, vix_change = (
-        get_yahoo("^VIX")
-    )
+    nasdaq_price, nasdaq_change = get_yahoo("^IXIC")
 
-    dxy_price, dxy_change = (
-        get_yahoo("DX-Y.NYB")
-    )
+    sp500_price, sp500_change = get_yahoo("^GSPC")
 
-    nasdaq_price, nasdaq_change = (
-        get_yahoo("^IXIC")
-    )
+    us10y_price, us10y_change = get_yahoo("^TNX")
 
-    sp500_price, sp500_change = (
-        get_yahoo("^GSPC")
-    )
-
-    us10y_price, us10y_change = (
-        get_yahoo("^TNX")
-    )
-
-
-    gold_price, gold_change = (
-        get_yahoo("GC=F")
-    )
-
+    gold_price, gold_change = get_yahoo("GC=F")
 
     usd_uah = get_usd_uah()
-
-
-    # BTC
 
     btc = crypto.get(
         "bitcoin",
         {}
     )
 
-    btc_price = btc.get(
-        "usd"
-    )
-
     btc_change = btc.get(
         "usd_24h_change"
     )
-
-
-    # SCORE
 
     score = calculate_score(
         btc_change,
@@ -451,11 +350,7 @@ def main():
         us10y_change
     )
 
-
-    market_signal = signal(score)
-
-
-    # BTC confirmation
+    market_signal = get_signal(score)
 
     if (
         score >= 30
@@ -474,8 +369,7 @@ def main():
     ):
 
         confirmation = (
-            "⚠️ Risk-On есть, "
-            "но BTC пока слабый"
+            "⚠️ Risk-On есть, но BTC пока слабый"
         )
 
     elif (
@@ -491,14 +385,8 @@ def main():
     else:
 
         confirmation = (
-            "🟡 BTC пока не подтверждает "
-            "сигнал"
+            "🟡 BTC пока не подтверждает сигнал"
         )
-
-
-    # =========================
-    # CRYPTO TEXT
-    # =========================
 
     crypto_text = ""
 
@@ -509,13 +397,8 @@ def main():
             {}
         )
 
-        price = coin.get(
-            "usd"
-        )
-
-        change = coin.get(
-            "usd_24h_change"
-        )
+        price = coin.get("usd")
+        change = coin.get("usd_24h_change")
 
         if ticker == "HYPE":
 
@@ -537,26 +420,13 @@ def main():
             f"{percent(change)}\n"
         )
 
+    now = datetime.now(
+        ZoneInfo("Europe/Kyiv")
+    ).strftime(
+        "%d.%m.%Y %H:%M"
+    )
 
-    # =========================
-    # TIME
-    # =========================
-
-    from zoneinfo import ZoneInfo
-
-now = datetime.now(
-    ZoneInfo("Europe/Kyiv")
-).strftime(
-    "%d.%m.%Y %H:%M"
-)
-
-
-    # =========================
-    # MESSAGE
-    # =========================
-
-
-message = f"""
+    message = f"""
 🤖 BTC RISK MONITOR
 
 🕐 {now}
@@ -590,17 +460,12 @@ RISK SCORE: {score:+d}/100
 
 ━━━━━━━━━━━━━━━━━━
 
-ℹ️ N/A означает, что источник
-временно не отдал значение.
+ℹ️ N/A = источник временно
+не отдал значение.
 
 ⚠️ Это рыночный фильтр,
-а не гарантия сделки. 
+а не гарантия бабла.
 """
-
-
-    # =========================
-    # TELEGRAM CHAT
-    # =========================
 
     updates = telegram(
         "getUpdates"
@@ -612,18 +477,14 @@ RISK SCORE: {score:+d}/100
             "Telegram getUpdates error"
         )
 
-
     results = updates.get(
         "result",
         []
     )
 
-
     if not results:
 
-        print(
-            "No Telegram chat found."
-        )
+        print("No Telegram chat found.")
 
         print(
             "Send /start to the bot."
@@ -631,9 +492,7 @@ RISK SCORE: {score:+d}/100
 
         return
 
-
     chat_id = None
-
 
     for update in reversed(results):
 
@@ -647,7 +506,6 @@ RISK SCORE: {score:+d}/100
 
             break
 
-
     if not chat_id:
 
         print(
@@ -656,11 +514,6 @@ RISK SCORE: {score:+d}/100
 
         return
 
-
-    # =========================
-    # SEND
-    # =========================
-
     result = telegram(
         "sendMessage",
         {
@@ -668,7 +521,6 @@ RISK SCORE: {score:+d}/100
             "text": message
         }
     )
-
 
     if not result or not result.get("ok"):
 
@@ -681,10 +533,7 @@ RISK SCORE: {score:+d}/100
             "Message was not sent"
         )
 
-
-    print("======================")
     print("MESSAGE SENT")
-    print("======================")
 
 
 if __name__ == "__main__":
