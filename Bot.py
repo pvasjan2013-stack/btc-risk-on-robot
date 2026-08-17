@@ -2,181 +2,352 @@ import os
 import json
 import urllib.request
 import urllib.parse
+from datetime import datetime, timezone
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.environ.get("BOT_TOKEN")
 
 if not TOKEN:
-    print("ERROR: BOT_TOKEN not found")
-    exit(1)
+    raise Exception("BOT_TOKEN is missing")
 
 
-def request_json(url, data=None):
-    try:
-        if data:
-            data = urllib.parse.urlencode(data).encode()
-            req = urllib.request.Request(url, data=data)
-        else:
-            req = urllib.request.Request(url)
+def get_json(url):
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "BTC-Risk-Bot/1.0"}
+    )
 
-        req.add_header("User-Agent", "BTC-Risk-Bot/1.0")
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return json.loads(response.read().decode())
-
-    except Exception as e:
-        print("REQUEST ERROR:")
-        print(type(e).__name__, str(e))
-        return None
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode())
 
 
 def telegram(method, params=None):
     url = f"https://api.telegram.org/bot{TOKEN}/{method}"
-    return request_json(url, params)
+
+    if params:
+        data = urllib.parse.urlencode(params).encode()
+        req = urllib.request.Request(url, data=data)
+    else:
+        req = urllib.request.Request(url)
+
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode())
 
 
-def get_market():
+def get_crypto():
+
+    ids = (
+        "bitcoin,ethereum,solana,hype,"
+        "ripple,binancecoin,dogecoin,cardano,"
+        "sui,avalanche-2,chainlink,the-open-network"
+    )
+
     url = (
-        "https://api.coingecko.com/api/v3/simple/price"
-        "?ids=bitcoin,ethereum"
+        "https://api.coingecko.com/api/v3/simple/price?"
+        f"ids={ids}"
         "&vs_currencies=usd"
         "&include_24hr_change=true"
     )
 
-    data = request_json(url)
+    return get_json(url)
 
-    if not data:
+
+def get_yahoo(symbol):
+
+    url = (
+        "https://query1.finance.yahoo.com/v8/finance/chart/"
+        + urllib.parse.quote(symbol)
+        + "?range=5d&interval=1d"
+    )
+
+    data = get_json(url)
+
+    result = data["chart"]["result"][0]
+
+    closes = [
+        x for x in result["indicators"]["quote"][0]["close"]
+        if x is not None
+    ]
+
+    if len(closes) < 2:
         return None
 
-    if "bitcoin" not in data or "ethereum" not in data:
-        print("ERROR: CoinGecko returned unexpected data")
-        print(data)
-        return None
+    price = closes[-1]
+    previous = closes[-2]
 
-    return data
+    change = (price / previous - 1) * 100
+
+    return price, change
+
+
+def get_usd_uah():
+
+    url = (
+        "https://bank.gov.ua/NBUStatService/v1/statdirectory/"
+        "exchange?valcode=USD&json"
+    )
+
+    data = get_json(url)
+
+    return float(data[0]["rate"])
+
+
+def get_gold():
+
+    data = get_yahoo("GC=F")
+
+    if data:
+        return data[0], data[1]
+
+    return None, None
+
+
+def calculate_score(btc, vix, dxy, nasdaq, sp500, us10y):
+
+    score = 0
+
+    # BTC
+    if btc > 1:
+        score += 20
+    elif btc < -1:
+        score -= 20
+
+    # VIX
+    if vix < 0:
+        score += 15
+    else:
+        score -= 15
+
+    # DXY
+    if dxy < 0:
+        score += 15
+    else:
+        score -= 15
+
+    # NASDAQ
+    if nasdaq > 0:
+        score += 15
+    else:
+        score -= 15
+
+    # S&P
+    if sp500 > 0:
+        score += 10
+    else:
+        score -= 10
+
+    # US10Y
+    if us10y < 0:
+        score += 10
+    else:
+        score -= 10
+
+    return max(-100, min(100, score))
+
+
+def get_signal(score):
+
+    if score >= 60:
+        return "🟢 STRONG LONG"
+
+    if score >= 30:
+        return "🟢 LONG BIAS"
+
+    if score <= -60:
+        return "🔴 STRONG SHORT"
+
+    if score <= -30:
+        return "🔴 SHORT BIAS"
+
+    return "🟡 WAIT"
+
+
+def fmt(value, digits=2):
+
+    if value is None:
+        return "N/A"
+
+    return f"{value:,.{digits}f}"
 
 
 def main():
 
-    print("================================")
-    print("BTC RISK ON BOT STARTED")
-    print("================================")
+    print("BTC RISK BOT STARTED")
 
-    print("Checking Telegram...")
+    crypto = get_crypto()
 
-    me = telegram("getMe")
+    btc = crypto["bitcoin"]
+    eth = crypto["ethereum"]
+    sol = crypto["solana"]
+    hype = crypto["hype"]
+    xrp = crypto["ripple"]
+    bnb = crypto["binancecoin"]
+    doge = crypto["dogecoin"]
+    ada = crypto["cardano"]
+    sui = crypto["sui"]
+    avax = crypto["avalanche-2"]
+    link = crypto["chainlink"]
+    ton = crypto["the-open-network"]
 
-    if not me or not me.get("ok"):
-        print("ERROR: Telegram token is invalid or Telegram unavailable")
-        print(me)
-        exit(1)
+    vix = get_yahoo("^VIX")
+    dxy = get_yahoo("DX-Y.NYB")
+    nasdaq = get_yahoo("^IXIC")
+    sp500 = get_yahoo("^GSPC")
+    us10y = get_yahoo("^TNX")
 
-    print("Telegram OK:", me["result"]["username"])
+    gold_price, gold_change = get_gold()
 
-    print("Getting market data...")
+    usd_uah = get_usd_uah()
 
-    market = get_market()
+    score = calculate_score(
+        btc["usd_24h_change"],
+        vix[1],
+        dxy[1],
+        nasdaq[1],
+        sp500[1],
+        us10y[1]
+    )
 
-    if not market:
-        print("ERROR: Could not get market data")
-        exit(1)
+    signal = get_signal(score)
 
-    btc_price = market["bitcoin"]["usd"]
-    btc_change = market["bitcoin"].get("usd_24h_change", 0)
+    btc_change = btc["usd_24h_change"]
 
-    eth_price = market["ethereum"]["usd"]
-    eth_change = market["ethereum"].get("usd_24h_change", 0)
+    if score >= 30 and btc_change > 0:
+        confirmation = "🟢 BTC подтверждает Risk-On"
 
-    print("BTC:", btc_price)
-    print("BTC 24h:", btc_change)
-    print("ETH:", eth_price)
-    print("ETH 24h:", eth_change)
+    elif score >= 30 and btc_change <= 0:
+        confirmation = "⚠️ Risk-On есть, но BTC слабый"
 
-    if btc_change >= 2:
-        signal = "🟢 LONG"
-        idea = "BTC показывает сильный рост. LONG-сценарий выглядит предпочтительнее."
-        score = 3
-
-    elif btc_change <= -2:
-        signal = "🔴 SHORT"
-        idea = "BTC показывает сильное снижение. SHORT-сценарий выглядит предпочтительнее."
-        score = -3
+    elif score <= -30 and btc_change < 0:
+        confirmation = "🔴 BTC подтверждает Risk-Off"
 
     else:
-        signal = "🟡 WAIT"
-        idea = "Движение BTC пока недостаточно сильное. Лучше дождаться подтверждения."
-        score = 0
+        confirmation = "🟡 BTC не даёт подтверждения"
 
-    text = f"""₿ BTC RISK ON BOT
+    now = datetime.now(timezone.utc).strftime(
+        "%d.%m.%Y %H:%M UTC"
+    )
 
-━━━━━━━━━━━━━━
+    message = f"""
+🤖 BTC RISK MONITOR
 
-₿ BTC: ${btc_price:,.2f}
-📊 24h: {btc_change:+.2f}%
+🕐 {now}
 
-Ξ ETH: ${eth_price:,.2f}
-📊 24h: {eth_change:+.2f}%
+━━━━━━━━━━━━━━━━━━
+₿ CRYPTO
+━━━━━━━━━━━━━━━━━━
 
-━━━━━━━━━━━━━━
+₿ BTC
+${fmt(btc["usd"])}  {btc_change:+.2f}%
 
-🎯 SIGNAL: {signal}
-⚡ Risk Score: {score:+d}/3
+Ξ ETH
+${fmt(eth["usd"])}  {eth["usd_24h_change"]:+.2f}%
 
-{idea}
+◎ SOL
+${fmt(sol["usd"])}  {sol["usd_24h_change"]:+.2f}%
 
-⚠️ Это аналитический фильтр, а не гарантия прибыли.
+🔥 HYPE
+${fmt(hype["usd"], 4)}  {hype["usd_24h_change"]:+.2f}%
+
+XRP
+${fmt(xrp["usd"])}  {xrp["usd_24h_change"]:+.2f}%
+
+BNB
+${fmt(bnb["usd"])}  {bnb["usd_24h_change"]:+.2f}%
+
+DOGE
+${fmt(doge["usd"], 4)}  {doge["usd_24h_change"]:+.2f}%
+
+ADA
+${fmt(ada["usd"], 4)}  {ada["usd_24h_change"]:+.2f}%
+
+SUI
+${fmt(sui["usd"])}  {sui["usd_24h_change"]:+.2f}%
+
+AVAX
+${fmt(avax["usd"])}  {avax["usd_24h_change"]:+.2f}%
+
+LINK
+${fmt(link["usd"])}  {link["usd_24h_change"]:+.2f}%
+
+TON
+${fmt(ton["usd"])}  {ton["usd_24h_change"]:+.2f}%
+
+━━━━━━━━━━━━━━━━━━
+🌎 MACRO
+━━━━━━━━━━━━━━━━━━
+
+DXY
+{fmt(dxy[0])}  {dxy[1]:+.2f}%
+
+VIX
+{fmt(vix[0])}  {vix[1]:+.2f}%
+
+NASDAQ
+{fmt(nasdaq[0], 0)}  {nasdaq[1]:+.2f}%
+
+S&P500
+{fmt(sp500[0], 0)}  {sp500[1]:+.2f}%
+
+US10Y
+{fmt(us10y[0])}%  {us10y[1]:+.2f}%
+
+🥇 GOLD
+${fmt(gold_price)}  {gold_change:+.2f}%
+
+🇺🇦 USD/UAH
+{fmt(usd_uah)}
+
+━━━━━━━━━━━━━━━━━━
+🎯 ALGORITHM
+━━━━━━━━━━━━━━━━━━
+
+RISK SCORE: {score:+d}/100
+
+{signal}
+
+{confirmation}
+
+━━━━━━━━━━━━━━━━━━
+
+⚠️ Это рыночный фильтр.
+Не является гарантией сделки.
 """
 
-    print("Searching for Telegram chat...")
-
+    # Получаем последний Telegram chat
     updates = telegram("getUpdates")
 
-    if not updates or not updates.get("ok"):
-        print("ERROR: Telegram getUpdates failed")
-        print(updates)
-        exit(1)
+    if not updates.get("ok"):
+        raise Exception("Telegram API error")
 
     results = updates.get("result", [])
 
     if not results:
-        print("================================")
-        print("NO CHAT FOUND")
-        print("Open the bot in Telegram and send /start")
-        print("Then run the workflow again.")
-        print("================================")
+        print("No Telegram chat found.")
         return
 
     chat_id = None
 
     for update in reversed(results):
 
-        message = update.get("message")
+        message_data = update.get("message")
 
-        if message and message.get("chat"):
-            chat_id = message["chat"]["id"]
+        if message_data:
+            chat_id = message_data["chat"]["id"]
             break
 
     if not chat_id:
-        print("ERROR: Could not find chat_id")
+        print("Chat ID not found.")
         return
 
-    print("Chat ID:", chat_id)
-
-    result = telegram(
+    telegram(
         "sendMessage",
         {
             "chat_id": chat_id,
-            "text": text
+            "text": message
         }
     )
 
-    if not result or not result.get("ok"):
-        print("ERROR: Telegram could not send message")
-        print(result)
-        exit(1)
-
-    print("================================")
-    print("MESSAGE SENT SUCCESSFULLY")
-    print("================================")
+    print("MESSAGE SENT")
 
 
 if __name__ == "__main__":
