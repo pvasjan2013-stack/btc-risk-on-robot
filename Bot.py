@@ -542,11 +542,13 @@ def main():
     # TIME
     # =========================
 
-    now = datetime.now(
-        timezone.utc
-    ).strftime(
-        "%d.%m.%Y %H:%M UTC"
-    )
+    from zoneinfo import ZoneInfo
+
+now = datetime.now(
+    ZoneInfo("Europe/Kyiv")
+).strftime(
+    "%d.%m.%Y %H:%M"
+)
 
 
     # =========================
@@ -569,22 +571,16 @@ def main():
 
 DXY
 {number(dxy_price)}  {percent(dxy_change)}
-
 VIX
 {number(vix_price)}  {percent(vix_change)}
-
 NASDAQ
 {number(nasdaq_price, 0)}  {percent(nasdaq_change)}
-
 S&P500
 {number(sp500_price, 0)}  {percent(sp500_change)}
-
 US10Y
 {number(us10y_price)}%  {percent(us10y_change)}
-
 🥇 GOLD
 ${number(gold_price)}  {percent(gold_change)}
-
 🇺🇦 USD/UAH
 {number(usd_uah)}
 
@@ -602,7 +598,6 @@ RISK SCORE: {score:+d}/100
 
 ℹ️ N/A означает, что источник
 временно не отдал значение.
-
 ⚠️ Это рыночный фильтр,
 а не гарантия сделки.
 """
