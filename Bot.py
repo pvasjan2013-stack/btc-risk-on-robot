@@ -33,7 +33,7 @@ def get_json(url):
         request = urllib.request.Request(
             url,
             headers={
-                "User-Agent": "BTC-Risk-Bot/3.0"
+                "User-Agent": "BTC-Risk-Bot/4.0"
             }
         )
 
@@ -203,14 +203,119 @@ def get_usd_uah():
     data = get_json(url)
 
     try:
-
         return float(
             data[0]["rate"]
         )
 
     except:
-
         return None
+
+
+def get_btc_dominance():
+
+    url = (
+        "https://api.coingecko.com/api/v3/"
+        "global"
+    )
+
+    data = get_json(url)
+
+    try:
+
+        return float(
+            data["data"]
+            ["market_cap_percentage"]
+            ["btc"]
+        )
+
+    except:
+        return None
+
+
+def get_binance_funding():
+
+    url = (
+        "https://fapi.binance.com/"
+        "fapi/v1/premiumIndex?"
+        "symbol=BTCUSDT"
+    )
+
+    data = get_json(url)
+
+    try:
+
+        return float(
+            data["lastFundingRate"]
+        ) * 100
+
+    except:
+        return None
+
+
+def get_binance_oi():
+
+    url = (
+        "https://fapi.binance.com/"
+        "fapi/v1/openInterest?"
+        "symbol=BTCUSDT"
+    )
+
+    data = get_json(url)
+
+    try:
+
+        return float(
+            data["openInterest"]
+        )
+
+    except:
+        return None
+
+
+def get_binance_liquidations():
+
+    url = (
+        "https://fapi.binance.com/"
+        "fapi/v1/allForceOrders?"
+        "symbol=BTCUSDT&"
+        "limit=100"
+    )
+
+    data = get_json(url)
+
+    if not data:
+        return None, None
+
+    try:
+
+        long_liq = 0
+        short_liq = 0
+
+        for order in data:
+
+            qty = float(
+                order["origQty"]
+            )
+
+            price = float(
+                order["price"]
+            )
+
+            value = qty * price
+
+            side = order["side"]
+
+            if side == "SELL":
+                long_liq += value
+
+            elif side == "BUY":
+                short_liq += value
+
+        return long_liq, short_liq
+
+    except:
+
+        return None, None
 
 
 def calculate_score(
@@ -295,42 +400,50 @@ def get_signal(score):
     return "🟡 WAIT"
 
 
-def main():
+def get_chat_id():
 
-    print("BTC RISK BOT STARTED")
+    updates = telegram(
+        "getUpdates"
+    )
 
-    me = telegram("getMe")
+    if not updates or not updates.get("ok"):
+        return None
 
-    if not me or not me.get("ok"):
-        raise Exception(
-            "Telegram BOT_TOKEN error"
+    results = updates.get(
+        "result",
+        []
+    )
+
+    for update in reversed(results):
+
+        message = update.get(
+            "message"
         )
 
-    print(
-        "Telegram:",
-        me["result"].get("username")
-    )
+        if message and message.get("chat"):
+
+            return message["chat"]["id"]
+
+    return None
+
+
+def make_keyboard():
+
+    return json.dumps({
+        "inline_keyboard": [
+            [
+                {
+                    "text": "📊 Обновить отчёт",
+                    "callback_data": "report"
+                }
+            ]
+        ]
+    })
+
+
+def build_report():
 
     crypto = get_crypto()
-
-    print(
-        "Crypto assets:",
-        len(crypto)
-    )
-
-    vix_price, vix_change = get_yahoo("^VIX")
-
-    dxy_price, dxy_change = get_yahoo("DX-Y.NYB")
-
-    nasdaq_price, nasdaq_change = get_yahoo("^IXIC")
-
-    sp500_price, sp500_change = get_yahoo("^GSPC")
-
-    us10y_price, us10y_change = get_yahoo("^TNX")
-
-    gold_price, gold_change = get_yahoo("GC=F")
-
-    usd_uah = get_usd_uah()
 
     btc = crypto.get(
         "bitcoin",
@@ -341,6 +454,23 @@ def main():
         "usd_24h_change"
     )
 
+    vix_price, vix_change = get_yahoo("^VIX")
+    dxy_price, dxy_change = get_yahoo("DX-Y.NYB")
+    nasdaq_price, nasdaq_change = get_yahoo("^IXIC")
+    sp500_price, sp500_change = get_yahoo("^GSPC")
+    us10y_price, us10y_change = get_yahoo("^TNX")
+    gold_price, gold_change = get_yahoo("GC=F")
+
+    usd_uah = get_usd_uah()
+
+    dominance = get_btc_dominance()
+
+    funding = get_binance_funding()
+
+    oi = get_binance_oi()
+
+    long_liq, short_liq = get_binance_liquidations()
+
     score = calculate_score(
         btc_change,
         vix_change,
@@ -350,7 +480,9 @@ def main():
         us10y_change
     )
 
-    market_signal = get_signal(score)
+    market_signal = get_signal(
+        score
+    )
 
     if (
         score >= 30
@@ -369,7 +501,7 @@ def main():
     ):
 
         confirmation = (
-            "⚠️ Risk-On есть, но BTC пока слабый"
+            "⚠️ Risk-On есть, но BTC слабый"
         )
 
     elif (
@@ -388,54 +520,43 @@ def main():
             "🟡 BTC пока не подтверждает сигнал"
         )
 
-    crypto_text = ""
-
-    for coin_id, ticker in CRYPTO_IDS.items():
-
-        coin = crypto.get(
-            coin_id,
-            {}
-        )
-
-        price = coin.get("usd")
-        change = coin.get("usd_24h_change")
-
-        if ticker == "HYPE":
-
-            price_text = number(
-                price,
-                4
-            )
-
-        else:
-
-            price_text = number(
-                price,
-                2
-            )
-
-        crypto_text += (
-            f"{ticker:<5} "
-            f"${price_text}  "
-            f"{percent(change)}\n"
-        )
-
     now = datetime.now(
         ZoneInfo("Europe/Kyiv")
     ).strftime(
         "%d.%m.%Y %H:%M"
     )
 
+    if funding is not None:
+
+        if funding > 0.01:
+            funding_text = "🔴 Лонги перегреты"
+
+        elif funding < -0.01:
+            funding_text = "🟢 Шорты перегреты"
+
+        else:
+            funding_text = "🟡 Нейтральный"
+
+    else:
+
+        funding_text = "N/A"
+
+    if long_liq is not None:
+
+        liquidation_text = (
+            f"Long ${number(long_liq / 1_000_000)}M / "
+            f"Short ${number(short_liq / 1_000_000)}M"
+        )
+
+    else:
+
+        liquidation_text = "N/A"
+
     message = f"""
 🤖 BTC RISK MONITOR
 
 🕐 {now}
 
-━━━━━━━━━━━━━━━━━━
-₿ CRYPTO
-━━━━━━━━━━━━━━━━━━
-
-{crypto_text}
 ━━━━━━━━━━━━━━━━━━
 🌎 MACRO
 ━━━━━━━━━━━━━━━━━━
@@ -449,6 +570,17 @@ GOLD    ${number(gold_price)}  {percent(gold_change)}
 USD/UAH {number(usd_uah)}
 
 ━━━━━━━━━━━━━━━━━━
+₿ BTC POSITIONING
+━━━━━━━━━━━━━━━━━━
+
+BTC Dominance  {number(dominance)}%
+Funding        {percent(funding)}
+OI             {number(oi, 0)}
+Liquidations   {liquidation_text}
+
+Funding: {funding_text}
+
+━━━━━━━━━━━━━━━━━━
 🎯 ALGORITHM
 ━━━━━━━━━━━━━━━━━━
 
@@ -460,80 +592,58 @@ RISK SCORE: {score:+d}/100
 
 ━━━━━━━━━━━━━━━━━━
 
-ℹ️ N/A = источник временно
-не отдал значение.
-
-⚠️ Это рыночный фильтр,
-а не гарантия бабла.
+⚠️ Risk Score — рыночный фильтр,
+не гарантия сделки.
 """
 
-    updates = telegram(
-        "getUpdates"
+    return message
+
+
+def send_report(chat_id):
+
+    message = build_report()
+
+    telegram(
+        "sendMessage",
+        {
+            "chat_id": chat_id,
+            "text": message,
+            "reply_markup": make_keyboard()
+        }
     )
 
-    if not updates or not updates.get("ok"):
+
+def main():
+
+    print("BTC RISK BOT STARTED")
+
+    me = telegram(
+        "getMe"
+    )
+
+    if not me or not me.get("ok"):
 
         raise Exception(
-            "Telegram getUpdates error"
+            "Telegram BOT_TOKEN error"
         )
 
-    results = updates.get(
-        "result",
-        []
-    )
-
-    if not results:
-
-        print("No Telegram chat found.")
-
-        print(
-            "Send /start to the bot."
-        )
-
-        return
-
-    chat_id = None
-
-    for update in reversed(results):
-
-        msg = update.get(
-            "message"
-        )
-
-        if msg and msg.get("chat"):
-
-            chat_id = msg["chat"]["id"]
-
-            break
+    chat_id = get_chat_id()
 
     if not chat_id:
 
         print(
-            "Chat ID not found."
+            "Chat not found."
         )
 
         return
 
-    result = telegram(
-        "sendMessage",
-        {
-            "chat_id": chat_id,
-            "text": message
-        }
+    send_report(
+        chat_id
     )
 
-    if not result or not result.get("ok"):
-
-        print(
-            "Telegram send error:",
-            result
-        )
-
-        raise Exception(
-            "Message was not sent"
-        )
-
-    print("MESSAGE SENT")
+    print(
+        "REPORT SENT"
+    )
 
 
 if __name__ == "__main__":
